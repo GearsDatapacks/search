@@ -1,7 +1,6 @@
 import gleam/bool
 import gleam/dynamic/decode
 import gleam/http/request
-import gleam/http/response
 import gleam/httpc
 import gleam/int
 import gleam/io
