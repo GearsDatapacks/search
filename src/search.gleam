@@ -1,5 +1,7 @@
+import gleam/bool
 import gleam/dynamic/decode
 import gleam/http/request
+import gleam/http/response
 import gleam/httpc
 import gleam/int
 import gleam/io
@@ -7,6 +9,14 @@ import gleam/json
 import gleam/list
 import gleam/string
 import simplifile as file
+
+const packages_api_url = "https://packages.gleam.run/api/packages/"
+
+const data_file = "packages.txt"
+
+const tarballs_directory = "packages/tarballs"
+
+const hex_api_url = "https://repo.hex.pm/tarballs/"
 
 pub type Package {
   Package(name: String, latest_version: String, downloads: Int)
@@ -52,7 +62,55 @@ pub fn main() -> Nil {
     Error(_) -> panic
   }
 
+  case file.is_directory(tarballs_directory) {
+    Ok(True) -> Nil
+    Ok(False) -> download_packages(packages)
+    Error(_) -> panic
+  }
+
   Nil
+}
+
+fn download_packages(packages: List(Package)) -> Nil {
+  io.println("Downloading tarballs...")
+
+  let assert Ok(Nil) = file.create_directory_all(tarballs_directory)
+  let package_count = int.to_string(list.length(packages))
+
+  use package, i <- index_each(packages)
+
+  let file_name = package.name <> "-" <> package.latest_version <> ".tar"
+  let file_path = tarballs_directory <> "/" <> file_name
+
+  use <- bool.lazy_guard(file.is_file(file_path) == Ok(True), fn() {
+    io.println("Skipping " <> file_name <> ", it is already downloaded")
+  })
+
+  io.print("Downloading " <> file_name <> "...")
+
+  let assert Ok(request) = request.to(hex_api_url <> file_name)
+
+  let assert Ok(response) = httpc.send_bits(request.set_body(request, <<>>))
+
+  assert response.status == 200
+
+  let assert Ok(Nil) = file.write_bits(file_path, response.body)
+
+  io.println(" Done (" <> int.to_string(i + 1) <> "/" <> package_count <> ")")
+}
+
+fn index_each(list: List(a), f: fn(a, Int) -> b) -> Nil {
+  do_index_each(list, f, 0)
+}
+
+fn do_index_each(list: List(a), f: fn(a, Int) -> b, i: Int) -> Nil {
+  case list {
+    [] -> Nil
+    [first, ..rest] -> {
+      f(first, i)
+      do_index_each(rest, f, i + 1)
+    }
+  }
 }
 
 fn write_data_to_file(packages: List(Package)) -> Nil {
@@ -80,10 +138,6 @@ fn read_data_from_file() -> List(Package) {
   let assert Ok(downloads) = int.parse(downloads)
   Package(name:, latest_version:, downloads:)
 }
-
-const packages_api_url = "https://packages.gleam.run/api/packages/"
-
-const data_file = "packages.txt"
 
 fn get_packages() -> List(Package) {
   io.print("Fetching package list...")
