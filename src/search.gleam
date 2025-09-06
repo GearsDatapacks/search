@@ -1,21 +1,20 @@
 import gleam/dynamic/decode
 import gleam/http/request
-import gleam/http/response
 import gleam/httpc
 import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
 import gleam/string
-import gleam/uri
 import simplifile as file
 
 pub type Package {
-  Package(name: String, downloads: Int)
+  Package(name: String, latest_version: String, downloads: Int)
 }
 
 fn package_decoder() -> decode.Decoder(Package) {
   use name <- decode.field("name", decode.string)
+  use latest_version <- decode.field("latest-version", decode.string)
   use downloads <- decode.field(
     "releases",
     decode.list(decode.at(
@@ -26,7 +25,7 @@ fn package_decoder() -> decode.Decoder(Package) {
     ))
       |> decode.map(int.sum),
   )
-  decode.success(Package(name:, downloads:))
+  decode.success(Package(name:, latest_version:, downloads:))
 }
 
 fn api_response_decoder() -> decode.Decoder(List(String)) {
@@ -60,7 +59,11 @@ fn write_data_to_file(packages: List(Package)) -> Nil {
   let assert Ok(Nil) =
     packages
     |> list.map(fn(package) {
-      package.name <> ": " <> int.to_string(package.downloads)
+      package.name
+      <> "-"
+      <> package.latest_version
+      <> ": "
+      <> int.to_string(package.downloads)
     })
     |> string.join("\n")
     |> file.write(to: data_file)
@@ -73,8 +76,9 @@ fn read_data_from_file() -> List(Package) {
 
   use line <- list.map(string.split(contents, "\n"))
   let assert Ok(#(name, downloads)) = string.split_once(line, ": ")
+  let assert Ok(#(name, latest_version)) = string.split_once(name, "-")
   let assert Ok(downloads) = int.parse(downloads)
-  Package(name:, downloads:)
+  Package(name:, latest_version:, downloads:)
 }
 
 const packages_api_url = "https://packages.gleam.run/api/packages/"
