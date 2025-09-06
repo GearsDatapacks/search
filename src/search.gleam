@@ -16,6 +16,8 @@ const data_file = "packages.txt"
 
 const tarballs_directory = "packages/tarballs"
 
+const source_zips_directory = "packages/source_zips"
+
 const hex_api_url = "https://repo.hex.pm/tarballs/"
 
 pub type Package {
@@ -68,8 +70,42 @@ pub fn main() -> Nil {
     Error(_) -> panic
   }
 
+  case file.is_directory(source_zips_directory) {
+    Ok(True) -> Nil
+    Ok(False) -> decompress_packages(packages)
+    Error(_) -> panic
+  }
+
   Nil
 }
+
+fn decompress_packages(packages: List(Package)) -> Nil {
+  let assert Ok(Nil) = file.create_directory_all(source_zips_directory)
+
+  let package_count = int.to_string(list.length(packages))
+
+  use package, i <- index_each(packages)
+
+  let tarball_name = package.name <> "-" <> package.latest_version <> ".tar"
+
+  io.print("Extracting source zip file from " <> tarball_name <> "...")
+
+  let assert Ok(contents) =
+    file.read_bits(tarballs_directory <> "/" <> tarball_name)
+
+  let assert Ok(contents) = decompress(contents)
+
+  let zip_path = source_zips_directory <> "/" <> tarball_name <> ".gz"
+
+  io.print(" Done. Writing contents to " <> zip_path <> "...")
+
+  let assert Ok(Nil) = file.write_bits(contents, to: zip_path)
+
+  io.println(" Done (" <> int.to_string(i + 1) <> "/" <> package_count <> ")")
+}
+
+@external(erlang, "search_ffi", "decompress")
+fn decompress(contents: BitArray) -> Result(BitArray, Nil)
 
 fn download_packages(packages: List(Package)) -> Nil {
   io.println("Downloading tarballs...")
