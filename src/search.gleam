@@ -8,6 +8,7 @@ import gleam/io
 import gleam/json
 import gleam/list
 import gleam/string
+import just
 import simplifile as file
 
 const packages_api_url = "https://packages.gleam.run/api/packages/"
@@ -31,12 +32,7 @@ fn package_decoder() -> decode.Decoder(Package) {
   use latest_version <- decode.field("latest-version", decode.string)
   use downloads <- decode.field(
     "releases",
-    decode.list(decode.at(
-      [
-        "downloads",
-      ],
-      decode.int,
-    ))
+    decode.list(decode.at(["downloads"], decode.int))
       |> decode.map(int.sum),
   )
   decode.success(Package(name:, latest_version:, downloads:))
@@ -84,7 +80,153 @@ pub fn main() -> Nil {
     Error(_) -> panic
   }
 
+  let reports = list.reverse(scan_packages(packages))
+  print_reports(reports)
+
   Nil
+}
+
+fn print_reports(reports: List(Report)) -> Nil {
+  let packages = list.map(reports, fn(report) { report.package }) |> list.unique
+
+  io.println(
+    "Found "
+    <> int.to_string(list.length(reports))
+    <> " JavaScript files in "
+    <> int.to_string(list.length(packages))
+    <> " packages.\n",
+  )
+
+  io.println("The following packages use JavaScript FFI:\n")
+
+  list.fold(reports, #("", []), fn(current, report) {
+    let #(current_name, current_files) = current
+    case report.package == current_name {
+      True -> #(current_name, [report.file, ..current_files])
+      False if current_name == "" -> #(report.package, [report.file])
+      False -> {
+        io.println("- " <> current_name <> ":")
+        list.each(current_files, fn(file) { io.println("  - " <> file) })
+
+        #(report.package, [report.file])
+      }
+    }
+  })
+
+  Nil
+}
+
+type Report {
+  Report(package: String, file: String)
+}
+
+fn scan_packages(packages: List(Package)) -> List(Report) {
+  let package_count = int.to_string(list.length(packages))
+
+  use reports, package, i <- list.index_fold(packages, [])
+
+  io.print("Scanning " <> package.name <> "...")
+
+  let assert Ok(files) =
+    file.get_files(sources_directory <> "/" <> package.name)
+
+  let reports =
+    list.fold(files, reports, fn(reports, file) {
+      case filepath.extension(file) {
+        Ok("mjs") | Ok("js") | Ok("cjs") ->
+          scan_javascript_file(file, package.name, reports)
+        _ -> reports
+      }
+    })
+
+  io.println(" Done (" <> int.to_string(i + 1) <> "/" <> package_count <> ")")
+
+  reports
+}
+
+fn scan_javascript_file(
+  file: String,
+  package: String,
+  reports: List(Report),
+) -> List(Report) {
+  let assert Ok(contents) = file.read(file)
+
+  let #(tokens, _) =
+    just.new(contents)
+    |> just.ignore_whitespace
+    |> just.ignore_comments
+    |> just.tokenise
+
+  let has_gleam_import = search_imports(tokens)
+
+  case has_gleam_import {
+    False -> reports
+    True -> [Report(package:, file:), ..reports]
+  }
+}
+
+fn search_imports(tokens: List(just.Token)) -> Bool {
+  case tokens {
+    [] -> False
+    [
+      just.Import,
+      just.Star,
+      just.ContextualKeyword(just.From),
+      just.String(contents: module, ..),
+      ..tokens
+    ]
+    | [
+        just.Import,
+        just.Star,
+        just.ContextualKeyword(just.As),
+        just.Identifier(_),
+        just.ContextualKeyword(just.From),
+        just.String(contents: module, ..),
+        ..tokens
+      ] ->
+      case is_gleam_module(module) {
+        True -> True
+        False -> search_imports(tokens)
+      }
+    [just.Import, just.LeftBrace, ..tokens] ->
+      case parse_import(tokens) {
+        Ok(#(module, tokens)) ->
+          case is_gleam_module(module) {
+            True -> True
+            False -> search_imports(tokens)
+          }
+        Error(tokens) -> search_imports(tokens)
+      }
+    [_, ..tokens] -> search_imports(tokens)
+  }
+}
+
+fn parse_import(
+  tokens: List(just.Token),
+) -> Result(#(String, List(just.Token)), List(just.Token)) {
+  case tokens {
+    [] -> Error([])
+    [just.Identifier(_), ..tokens] | [just.Comma, ..tokens] ->
+      parse_import(tokens)
+    [
+      just.RightBrace,
+      just.ContextualKeyword(just.From),
+      just.String(contents: module, ..),
+      ..tokens
+    ] -> Ok(#(module, tokens))
+    [_, ..] -> Error(tokens)
+  }
+}
+
+/// We can't tell for sure if an imported module is a Gleam module, but we can
+/// use heuristics. Imported Gleam modules will be relative, and use the `.mjs`
+/// extension.
+fn is_gleam_module(module: String) -> Bool {
+  // TODO: Maybe we can actually check if a Gleam module with the same name exists?
+  let is_relative =
+    string.starts_with(module, "./") || string.starts_with(module, "../")
+  let is_mjs = string.ends_with(module, ".mjs")
+  is_relative && is_mjs
 }
 
 fn extract_sources(packages: List(Package)) -> Nil {
