@@ -1,3 +1,4 @@
+import filepath
 import gleam/bool
 import gleam/dynamic/decode
 import gleam/http/request
@@ -16,6 +17,8 @@ const data_file = "packages.txt"
 const tarballs_directory = "packages/tarballs"
 
 const source_zips_directory = "packages/source_zips"
+
+const sources_directory = "packages/sources"
 
 const hex_api_url = "https://repo.hex.pm/tarballs/"
 
@@ -75,7 +78,46 @@ pub fn main() -> Nil {
     Error(_) -> panic
   }
 
+  case file.is_directory(sources_directory) {
+    Ok(True) -> Nil
+    Ok(False) -> extract_sources(packages)
+    Error(_) -> panic
+  }
+
   Nil
+}
+
+fn extract_sources(packages: List(Package)) -> Nil {
+  let assert Ok(Nil) = file.create_directory_all(source_zips_directory)
+
+  let package_count = int.to_string(list.length(packages))
+
+  use package, i <- index_each(packages)
+
+  let tarball_name = package.name <> "-" <> package.latest_version <> ".tar.gz"
+
+  io.print("Extracting source files from " <> tarball_name <> "...")
+
+  let assert Ok(contents) =
+    file.read_bits(source_zips_directory <> "/" <> tarball_name)
+
+  let assert Ok(decompressed) = decompress_gzip(contents)
+
+  let assert Ok(files) = extract_files(decompressed)
+
+  let directory_path = sources_directory <> "/" <> package.name
+
+  io.print(" Done. Writing files to " <> directory_path <> "...")
+
+  list.each(files, fn(file) {
+    let #(path, contents) = file
+    let file_path = directory_path <> "/" <> path
+    let assert Ok(Nil) =
+      file.create_directory_all(filepath.directory_name(file_path))
+    let assert Ok(Nil) = file.write(contents:, to: file_path)
+  })
+
+  io.println(" Done (" <> int.to_string(i + 1) <> "/" <> package_count <> ")")
 }
 
 fn decompress_packages(packages: List(Package)) -> Nil {
@@ -92,7 +134,7 @@ fn decompress_packages(packages: List(Package)) -> Nil {
   let assert Ok(contents) =
     file.read_bits(tarballs_directory <> "/" <> tarball_name)
 
-  let assert Ok(contents) = decompress(contents)
+  let assert Ok(contents) = extract_contents(contents)
 
   let zip_path = source_zips_directory <> "/" <> tarball_name <> ".gz"
 
@@ -103,8 +145,14 @@ fn decompress_packages(packages: List(Package)) -> Nil {
   io.println(" Done (" <> int.to_string(i + 1) <> "/" <> package_count <> ")")
 }
 
-@external(erlang, "search_ffi", "decompress")
-fn decompress(contents: BitArray) -> Result(BitArray, Nil)
+@external(erlang, "search_ffi", "extract_contents_zip")
+fn extract_contents(contents: BitArray) -> Result(BitArray, Nil)
+
+@external(erlang, "search_ffi", "decompress_gzip")
+fn decompress_gzip(contents: BitArray) -> Result(BitArray, Nil)
+
+@external(erlang, "search_ffi", "extract_all_files")
+fn extract_files(contents: BitArray) -> Result(List(#(String, String)), Nil)
 
 fn download_packages(packages: List(Package)) -> Nil {
   io.println("Downloading tarballs...")
