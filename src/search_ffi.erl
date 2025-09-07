@@ -4,9 +4,9 @@
 
 extract_all_files(Bits) ->
     case erl_tar:extract({binary, Bits}, [{files, ["contents.tar.gz"]}, memory]) of
-        {ok, [{"contents.tar.gz", Data}]} ->
+        {ok, [{"contents.tar.gz", Contents}]} ->
             try
-                Data = zlib:gunzip(Bits),
+                Data = zlib:gunzip(Contents),
                 case erl_tar:extract({binary, Data}, [memory]) of
                     {ok, Files = [_ | _]} ->
                         {ok, remap_files(Files, [])};
