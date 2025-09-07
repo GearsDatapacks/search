@@ -43,6 +43,9 @@ fn api_response_decoder() -> decode.Decoder(List(String)) {
 
 pub fn main() -> Nil {
   let args = argv.load().arguments
+
+  use <- bool.lazy_guard(list.contains(args, "--help"), print_help_text)
+
   let refresh_packages = list.contains(args, "--refresh-packages")
   let download_missing = list.contains(args, "--download-missing")
   let write_to_file = list.contains(args, "--write-to-file")
@@ -76,6 +79,30 @@ pub fn main() -> Nil {
   print_reports(reports, write_to_file)
 
   Nil
+}
+
+fn print_help_text() -> Nil {
+  io.println(
+    "
+USAGE: search [FLAGS]
+
+Searches Gleam packages for JavaScript code using the old API for custom types.
+
+FLAGS:
+  --refresh-packages  Normally, if a search has already been performed, `search`
+    will use the cached information in `packages.txt`. If for some reason ou want
+    to completely refresh the information, this will ignore the cache file.
+
+  --download-missing  Normally, if a search has already been performed, `search`
+    will not attempt to download packages and read from the `packages` directory.
+    If `--download-missing` is passed, `search` will go through the package list
+    again, and if the package is not found in the `packages` directory, it will be
+    downloaded.
+
+  --write-to-file  Write the gathered information to a `results.txt` file,
+    instead of printing to stdout.
+",
+  )
 }
 
 fn print_reports(reports: List(Report), write_to_file: Bool) -> Nil {
