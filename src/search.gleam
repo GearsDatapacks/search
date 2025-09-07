@@ -1,3 +1,4 @@
+import argv
 import filepath
 import gleam/bool
 import gleam/dynamic/decode
@@ -19,6 +20,8 @@ const sources_directory = "packages"
 
 const hex_api_url = "https://repo.hex.pm/tarballs/"
 
+const out_file = "results.txt"
+
 pub type Package {
   Package(name: String, latest_version: String, downloads: Int)
 }
@@ -39,14 +42,19 @@ fn api_response_decoder() -> decode.Decoder(List(String)) {
 }
 
 pub fn main() -> Nil {
+  let args = argv.load().arguments
+  let refresh_packages = list.contains(args, "--refresh-packages")
+  let download_missing = list.contains(args, "--download-missing")
+  let write_to_file = list.contains(args, "--write-to-file")
+
   let packages = case file.is_file(data_file) {
-    Ok(True) -> {
+    Ok(True) if !refresh_packages -> {
       io.print("Reading packages from file...")
       let packages = read_data_from_file()
       io.println(" Done")
       packages
     }
-    Ok(False) -> {
+    Ok(False) | Ok(True) -> {
       let packages = get_packages()
       let packages =
         list.sort(packages, fn(a, b) { int.compare(b.downloads, a.downloads) })
@@ -59,45 +67,58 @@ pub fn main() -> Nil {
   }
 
   case file.is_directory(sources_directory) {
-    Ok(True) -> Nil
-    Ok(False) -> download_packages(packages)
+    Ok(True) if !download_missing -> Nil
+    Ok(False) | Ok(True) -> download_packages(packages)
     Error(_) -> panic
   }
 
   let reports = list.reverse(scan_packages(packages))
-  print_reports(reports)
+  print_reports(reports, write_to_file)
 
   Nil
 }
 
-fn print_reports(reports: List(Report)) -> Nil {
+fn print_reports(reports: List(Report), write_to_file: Bool) -> Nil {
   let packages = list.map(reports, fn(report) { report.package }) |> list.unique
 
-  io.println(
+  let report =
     "Found "
     <> int.to_string(list.length(reports))
     <> " JavaScript files in "
     <> int.to_string(list.length(packages))
-    <> " packages.\n",
-  )
+    <> " packages.\n\nThe following packages use JavaScript FFI:\n"
 
-  io.println("The following packages use JavaScript FFI:\n")
+  let #(report, last, files) =
+    list.fold(reports, #(report, "", []), fn(current, report) {
+      let #(acc, current_name, current_files) = current
+      case report.package == current_name {
+        True -> #(acc, current_name, [report.file, ..current_files])
+        False if current_name == "" -> #(acc, report.package, [report.file])
+        False -> {
+          let acc = acc <> "- " <> current_name <> ":\n"
+          let acc =
+            list.fold(current_files, acc, fn(acc, file) {
+              acc <> "  - " <> file <> "\n"
+            })
 
-  list.fold(reports, #("", []), fn(current, report) {
-    let #(current_name, current_files) = current
-    case report.package == current_name {
-      True -> #(current_name, [report.file, ..current_files])
-      False if current_name == "" -> #(report.package, [report.file])
-      False -> {
-        io.println("- " <> current_name <> ":")
-        list.each(current_files, fn(file) { io.println("  - " <> file) })
-
-        #(report.package, [report.file])
+          #(acc, report.package, [report.file])
+        }
       }
-    }
-  })
+    })
 
-  Nil
+  let report = report <> "- " <> last <> ":\n"
+  let report =
+    list.fold(files, report, fn(acc, file) { acc <> "  - " <> file <> "\n" })
+
+  case write_to_file {
+    True -> {
+      io.print("\nWriting data to file...")
+      let assert Ok(Nil) = file.write(report, to: out_file)
+      io.println(" Done")
+      Nil
+    }
+    False -> io.println(report)
+  }
 }
 
 type Report {
@@ -108,8 +129,6 @@ fn scan_packages(packages: List(Package)) -> List(Report) {
   let package_count = int.to_string(list.length(packages))
 
   use reports, package, i <- list.index_fold(packages, [])
-
-  io.print("Scanning " <> package.name <> "...")
 
   let package_directory = sources_directory <> "/" <> package.name
 
@@ -125,6 +144,8 @@ fn scan_packages(packages: List(Package)) -> List(Report) {
       reports
     },
   )
+
+  io.print("Scanning " <> package.name <> "...")
 
   let assert Ok(files) = file.get_files(package_directory)
 
@@ -314,7 +335,7 @@ fn download_packages(packages: List(Package)) -> Nil {
   // Sometimes the package API contains old information so we try to download
   // non-existent Hex packages. In that case, we can just skip them.
   use <- bool.lazy_guard(response.status == 404, fn() {
-    io.println("Could not find package " <> package.name <> ", skipped.")
+    io.println("\nCould not find package " <> package.name <> ", skipping...")
   })
 
   assert response.status == 200
