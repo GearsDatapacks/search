@@ -161,7 +161,11 @@ fn scan_javascript_file(
 
   case has_gleam_import {
     False -> reports
-    True -> [Report(package:, file:), ..reports]
+    True -> {
+      let assert Ok(#(_, file_path_within_package)) =
+        string.split_once(file, "src/")
+      [Report(package:, file: file_path_within_package), ..reports]
+    }
   }
 }
 
