@@ -157,7 +157,7 @@ fn scan_javascript_file(
     |> just.ignore_comments
     |> just.tokenise
 
-  let has_gleam_import = search_imports(tokens)
+  let has_gleam_import = search_imports(tokens, file)
 
   case has_gleam_import {
     False -> reports
@@ -165,7 +165,7 @@ fn scan_javascript_file(
   }
 }
 
-fn search_imports(tokens: List(just.Token)) -> Bool {
+fn search_imports(tokens: List(just.Token), file: String) -> Bool {
   case tokens {
     [] -> False
     [
@@ -184,20 +184,20 @@ fn search_imports(tokens: List(just.Token)) -> Bool {
         just.String(contents: module, ..),
         ..tokens
       ] ->
-      case is_gleam_module(module) {
+      case is_gleam_module(module, file) {
         True -> True
-        False -> search_imports(tokens)
+        False -> search_imports(tokens, file)
       }
     [just.Import, just.LeftBrace, ..tokens] ->
       case parse_import(tokens) {
         Ok(#(module, tokens)) ->
-          case is_gleam_module(module) {
+          case is_gleam_module(module, file) {
             True -> True
-            False -> search_imports(tokens)
+            False -> search_imports(tokens, file)
           }
-        Error(tokens) -> search_imports(tokens)
+        Error(tokens) -> search_imports(tokens, file)
       }
-    [_, ..tokens] -> search_imports(tokens)
+    [_, ..tokens] -> search_imports(tokens, file)
   }
 }
 
@@ -218,15 +218,19 @@ fn parse_import(
   }
 }
 
-/// We can't tell for sure if an imported module is a Gleam module, but we can
-/// use heuristics. Imported Gleam modules will be relative, and use the `.mjs`
-/// extension.
-fn is_gleam_module(module: String) -> Bool {
-  // TODO: Maybe we can actually check if a Gleam module with the same name exists?
-  let is_relative =
-    string.starts_with(module, "./") || string.starts_with(module, "../")
-  let is_mjs = string.ends_with(module, ".mjs")
-  is_relative && is_mjs
+fn is_gleam_module(module: String, current_path: String) -> Bool {
+  use <- bool.guard(filepath.base_name(module) == "gleam.mjs", True)
+  use <- bool.guard(
+    !{ string.starts_with(module, "./") || string.starts_with(module, "../") },
+    False,
+  )
+  use <- bool.guard(!string.ends_with(module, ".mjs"), False)
+  let assert Ok(path) =
+    current_path
+    |> filepath.directory_name
+    |> filepath.join(string.replace(module, ".mjs", ".gleam"))
+    |> filepath.expand
+  file.is_file(path) == Ok(True)
 }
 
 fn extract_sources(packages: List(Package)) -> Nil {
