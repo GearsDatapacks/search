@@ -177,6 +177,13 @@ fn search_imports(tokens: List(just.Token), file: String) -> Bool {
     ]
     | [
         just.Import,
+        just.Identifier(_),
+        just.ContextualKeyword(just.From),
+        just.String(contents: module, ..),
+        ..tokens
+      ]
+    | [
+        just.Import,
         just.Star,
         just.ContextualKeyword(just.As),
         just.Identifier(_),
@@ -189,9 +196,13 @@ fn search_imports(tokens: List(just.Token), file: String) -> Bool {
         False -> search_imports(tokens, file)
       }
     [just.Import, just.LeftBrace, ..tokens] ->
-      case parse_import(tokens) {
-        Ok(#(module, tokens)) ->
-          case is_gleam_module(module, file) {
+      case parse_import(tokens, []) {
+        Ok(#(module, imports, tokens)) ->
+          case
+            // We also check if any of the imports start with capital letters. This
+            // indicates we are importing a custom type and not just a function.
+            is_gleam_module(module, file) && list.any(imports, is_capitalised)
+          {
             True -> True
             False -> search_imports(tokens, file)
           }
@@ -201,19 +212,59 @@ fn search_imports(tokens: List(just.Token), file: String) -> Bool {
   }
 }
 
+fn is_capitalised(string: String) -> Bool {
+  case string {
+    "A" <> _
+    | "B" <> _
+    | "C" <> _
+    | "D" <> _
+    | "E" <> _
+    | "F" <> _
+    | "G" <> _
+    | "H" <> _
+    | "I" <> _
+    | "J" <> _
+    | "K" <> _
+    | "L" <> _
+    | "M" <> _
+    | "N" <> _
+    | "O" <> _
+    | "P" <> _
+    | "Q" <> _
+    | "R" <> _
+    | "S" <> _
+    | "T" <> _
+    | "U" <> _
+    | "V" <> _
+    | "W" <> _
+    | "X" <> _
+    | "Y" <> _
+    | "Z" <> _ -> True
+    _ -> False
+  }
+}
+
 fn parse_import(
   tokens: List(just.Token),
-) -> Result(#(String, List(just.Token)), List(just.Token)) {
+  imports: List(String),
+) -> Result(#(String, List(String), List(just.Token)), List(just.Token)) {
   case tokens {
     [] -> Error([])
-    [just.Identifier(_), ..tokens] | [just.Comma, ..tokens] ->
-      parse_import(tokens)
+    [
+      just.Identifier(name),
+      just.ContextualKeyword(just.As),
+      just.Identifier(_),
+      ..tokens
+    ]
+    | [just.Identifier(name), ..tokens] ->
+      parse_import(tokens, [name, ..imports])
+    [just.Comma, ..tokens] -> parse_import(tokens, imports)
     [
       just.RightBrace,
       just.ContextualKeyword(just.From),
       just.String(contents: module, ..),
       ..tokens
-    ] -> Ok(#(module, tokens))
+    ] -> Ok(#(module, imports, tokens))
     [_, ..] -> Error(tokens)
   }
 }
