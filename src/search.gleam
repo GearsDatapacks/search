@@ -111,8 +111,22 @@ fn scan_packages(packages: List(Package)) -> List(Report) {
 
   io.print("Scanning " <> package.name <> "...")
 
-  let assert Ok(files) =
-    file.get_files(sources_directory <> "/" <> package.name)
+  let package_directory = sources_directory <> "/" <> package.name
+
+  // If the package index contains outdated information containing non-existent
+  // packages, and therefore the directory for a particular package is missing,
+  // we can just skip that package.
+  use <- bool.lazy_guard(
+    file.is_directory(package_directory) == Ok(False),
+    return: fn() {
+      io.println(
+        "Package " <> package.name <> " missing from files, skipping...",
+      )
+      reports
+    },
+  )
+
+  let assert Ok(files) = file.get_files(package_directory)
 
   let reports =
     list.fold(files, reports, fn(reports, file) {
@@ -283,6 +297,13 @@ fn download_packages(packages: List(Package)) -> Nil {
   use package, i <- index_each(packages)
 
   let file_name = package.name <> "-" <> package.latest_version <> ".tar"
+  let directory_path = sources_directory <> "/" <> package.name
+
+  use <- bool.lazy_guard(file.is_directory(directory_path) == Ok(True), fn() {
+    io.println(
+      "Package " <> package.name <> " has already been downloaded, skipping...",
+    )
+  })
 
   io.print("Downloading " <> file_name <> "...")
 
@@ -290,14 +311,18 @@ fn download_packages(packages: List(Package)) -> Nil {
 
   let assert Ok(response) = httpc.send_bits(request.set_body(request, <<>>))
 
+  // Sometimes the package API contains old information so we try to download
+  // non-existent Hex packages. In that case, we can just skip them.
+  use <- bool.lazy_guard(response.status == 404, fn() {
+    io.println("Could not find package " <> package.name <> ", skipped.")
+  })
+
   assert response.status == 200
 
   io.println(" Done")
   io.print("Extracting files from " <> file_name <> "...")
 
   let assert Ok(files) = extract_files(response.body)
-
-  let directory_path = sources_directory <> "/" <> package.name
 
   io.println(" Done")
   io.print("Writing files to " <> directory_path <> "...")
