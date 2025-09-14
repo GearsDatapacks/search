@@ -3,6 +3,4 @@
 /build
 erl_crash.dump
 
-packages.txt
-/packages
 results.txt
