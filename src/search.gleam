@@ -25,12 +25,13 @@ pub fn main() -> Nil {
   let write_to_file = list.contains(args, "--write-to-file")
 
   let assert Ok(pack) =
-    pack.load(pack.Options(
-      write_to_file: True,
-      refresh_package_list: refresh_packages,
-      write_packages_to_disc: True,
-      read_packages_from_disc: True,
-    ))
+    pack.load(
+      pack.Options(
+        ..pack.default_options,
+        refresh_package_list: refresh_packages,
+        print_logs: True,
+      ),
+    )
 
   let packages =
     pack
