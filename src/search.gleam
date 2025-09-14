@@ -1,7 +1,7 @@
 import argv
 import filepath
 import gleam/bool
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/int
 import gleam/io
 import gleam/list
@@ -121,7 +121,7 @@ type Report {
 
 fn scan_packages(
   packages: List(Package),
-  package_files: dict.Dict(String, List(pack.File)),
+  package_files: Dict(String, List(pack.File)),
 ) -> List(Report) {
   let package_count = int.to_string(list.length(packages))
 
@@ -145,6 +145,7 @@ fn scan_packages(
                     package.name,
                     reports,
                     files,
+                    package_files,
                   )
                 _ -> reports
               }
@@ -166,6 +167,7 @@ fn scan_javascript_file(
   package: String,
   reports: List(Report),
   files: List(pack.File),
+  packages: Dict(String, List(pack.File)),
 ) -> List(Report) {
   let #(tokens, _) =
     just.new(contents)
@@ -173,7 +175,7 @@ fn scan_javascript_file(
     |> just.ignore_comments
     |> just.tokenise
 
-  let has_gleam_import = search_imports(tokens, name, files)
+  let has_gleam_import = search_imports(tokens, name, files, packages)
 
   case has_gleam_import {
     False -> reports
@@ -189,6 +191,7 @@ fn search_imports(
   tokens: List(just.Token),
   file: String,
   files: List(pack.File),
+  packages: Dict(String, List(pack.File)),
 ) -> Bool {
   case tokens {
     [] -> False
@@ -215,9 +218,9 @@ fn search_imports(
         just.String(contents: module, ..),
         ..tokens
       ] ->
-      case is_gleam_module(module, file, files) {
+      case is_gleam_module(module, file, files, packages) {
         True -> True
-        False -> search_imports(tokens, file, files)
+        False -> search_imports(tokens, file, files, packages)
       }
     [just.Import, just.LeftBrace, ..tokens] ->
       case parse_import(tokens, []) {
@@ -225,15 +228,15 @@ fn search_imports(
           case
             // We also check if any of the imports start with capital letters. This
             // indicates we are importing a custom type and not just a function.
-            is_gleam_module(module, file, files)
+            is_gleam_module(module, file, files, packages)
             && list.any(imports, is_capitalised)
           {
             True -> True
-            False -> search_imports(tokens, file, files)
+            False -> search_imports(tokens, file, files, packages)
           }
-        Error(tokens) -> search_imports(tokens, file, files)
+        Error(tokens) -> search_imports(tokens, file, files, packages)
       }
-    [_, ..tokens] -> search_imports(tokens, file, files)
+    [_, ..tokens] -> search_imports(tokens, file, files, packages)
   }
 }
 
@@ -294,7 +297,12 @@ fn parse_import(
   }
 }
 
-fn is_gleam_module(module: String, file: String, files: List(pack.File)) -> Bool {
+fn is_gleam_module(
+  module: String,
+  file: String,
+  files: List(pack.File),
+  packages: Dict(String, List(pack.File)),
+) -> Bool {
   use <- bool.guard(filepath.base_name(module) == "gleam.mjs", True)
   use <- bool.guard(
     !{ string.starts_with(module, "./") || string.starts_with(module, "../") },
@@ -309,6 +317,28 @@ fn is_gleam_module(module: String, file: String, files: List(pack.File)) -> Bool
     |> filepath.expand
   case path {
     Error(_) -> False
-    Ok(path) -> list.any(files, fn(file) { file.name == path })
+    Ok(path) -> gleam_module_exists(path, files, packages)
+  }
+}
+
+fn gleam_module_exists(
+  path: String,
+  files: List(pack.File),
+  packages: Dict(String, List(pack.File)),
+) -> Bool {
+  case path {
+    "src/" <> _ | "dev/" <> _ | "test/" <> _ ->
+      list.any(files, fn(file) { file.name == path })
+    _ ->
+      case string.split_once(path, "/") {
+        Error(_) -> False
+        Ok(#(package_name, path)) -> {
+          let path = filepath.join("src", path)
+          case dict.get(packages, package_name) {
+            Error(_) -> False
+            Ok(files) -> list.any(files, fn(file) { file.name == path })
+          }
+        }
+      }
   }
 }
