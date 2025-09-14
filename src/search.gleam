@@ -47,7 +47,7 @@ pub fn main() -> Nil {
     })
     |> list.sort(fn(a, b) { int.compare(b.downloads, a.downloads) })
 
-  let assert Ok(package_files) = pack.download_packages(pack)
+  let assert Ok(package_files) = pack.download(pack)
 
   let reports = list.reverse(scan_packages(packages, package_files))
   print_reports(reports, write_to_file)
